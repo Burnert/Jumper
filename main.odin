@@ -12,6 +12,7 @@ import "core:time"
 
 import b2d "vendor:box2d"
 import "vendor:cgltf"
+import ma "vendor:miniaudio"
 
 import "sm:core"
 import "sm:platform"
@@ -133,6 +134,20 @@ main :: proc() {
 	// Free after initialization
 	free_all(context.temp_allocator)
 
+	ma_config := ma.engine_config_init()
+	defer ma.engine_uninit(&g_audio_engine.engine)
+	if r := ma.engine_init(&ma_config, &g_audio_engine.engine); r != .SUCCESS {
+		log.error("Audio engine failed to start.", r)
+		return
+	}
+
+	// Play the ambient
+	ma.sound_init_from_file(&g_audio_engine.engine, cstring("res/sounds/ambient.ogg"), 0, nil, nil, &g_audio_engine.ambient)
+	ma.sound_set_volume(&g_audio_engine.ambient, 0.3)
+	ma.sound_set_looping(&g_audio_engine.ambient, true)
+	ma.sound_start(&g_audio_engine.ambient)
+	defer ma.sound_uninit(&g_audio_engine.ambient)
+
 	// Create Box2d world
 	world_def := b2d.DefaultWorldDef()
 	world_def.gravity = Vec2{0, WORLD_GRAVITY}
@@ -213,6 +228,12 @@ main :: proc() {
 		last_now = now
 	}
 }
+
+Audio_Engine :: struct {
+	engine: ma.engine,
+	ambient: ma.sound,
+}
+g_audio_engine: Audio_Engine
 
 WORLD_GRAVITY :: -15.0
 
@@ -346,10 +367,16 @@ player_jump :: proc() {
 
 	player_pos := b2d.Body_GetPosition(g_b2d_state.player)
 	b2d.Body_ApplyForce(g_b2d_state.player, Vec2{0, PLAYER_JUMP_FORCE}, player_pos, true)
+
+	if r := ma.engine_play_sound(&g_audio_engine.engine, cstring("res/sounds/jump.wav"), nil); r != .SUCCESS {
+		log.error("Failed to play the sound.")
+	}
 }
 
 begin_wave :: proc() {
 	clear(&g_game_state.scheduled_spawns)
+
+	ma.sound_start(&g_audio_engine.ambient)
 
 	// Calc the no-spawn zone
 	player_pos := b2d.Body_GetPosition(g_b2d_state.player)
@@ -509,11 +536,26 @@ update :: proc(dt: f64) {
 		}
 	}
 
+	// Handle ambient stopping for lols
+	if !g_game_state.is_spawning_boxes {
+		dont_stop: bool
+		for box in g_b2d_state.boxes {
+			pos := b2d.Body_GetPosition(box)
+			if pos.y > -8 {
+				dont_stop = true
+				break
+			}
+		}
+		if !dont_stop && !g_game_state.player_lost {
+			ma.sound_stop(&g_audio_engine.ambient)
+		}
+	}
+
 	// Apply player movement force
 	if player_is_on_ground() && !g_game_state.player_lost {
 		player_pos := b2d.Body_GetPosition(g_b2d_state.player)
 		l_force := -PLAYER_HORIZONTAL_MOVEMENT_FORCE * f32(uint(g_input_state.input_left))
-		r_force :=  PLAYER_HORIZONTAL_MOVEMENT_FORCE * f32(uint(g_input_state.input_right))
+		r_force := +PLAYER_HORIZONTAL_MOVEMENT_FORCE * f32(uint(g_input_state.input_right))
 		player_force := Vec2{l_force + r_force, 0} * f32(dt)
 		b2d.Body_ApplyForce(g_b2d_state.player, player_force, player_pos, true)
 	}
@@ -521,7 +563,7 @@ update :: proc(dt: f64) {
 	// Step world simulation
 	b2d.World_Step(g_b2d_state.world, cast(f32) dt, 4)
 
-	// Handle hit events
+	// Handle contact events
 	contact_events := b2d.World_GetContactEvents(g_b2d_state.world)
 	for i in 0..<contact_events.beginCount {
 		begin_contact_event := contact_events.beginEvents[i]
@@ -539,11 +581,15 @@ update :: proc(dt: f64) {
 					destroy_hearts()
 					if g_game_state.player_lives < PLAYER_MAX_LIVES {
 						g_game_state.player_lives += 1
+						if r := ma.engine_play_sound(&g_audio_engine.engine, cstring("res/sounds/pickup.wav"), nil); r != .SUCCESS {
+							log.error("Failed to play the sound.")
+						}
 					}
 				}
 			}
 		}
 	}
+	// Handle hit events
 	for i in 0..<contact_events.hitCount {
 		hit_event := contact_events.hitEvents[i]
 		body_a := b2d.Shape_GetBody(hit_event.shapeIdA)
@@ -564,13 +610,16 @@ update :: proc(dt: f64) {
 								g_game_state.player_lives -= 1
 								if g_game_state.player_lives == 0 {
 									g_game_state.player_lost = true
+
+									// Play the fail ambient
+									ma.sound_stop(&g_audio_engine.ambient)
+									ma.sound_uninit(&g_audio_engine.ambient)
+									ma.sound_init_from_file(&g_audio_engine.engine, cstring("res/sounds/fail.ogg"), 0, nil, nil, &g_audio_engine.ambient)
+									ma.sound_set_volume(&g_audio_engine.ambient, 0.3)
+									ma.sound_set_looping(&g_audio_engine.ambient, true)
+									ma.sound_start(&g_audio_engine.ambient)
 								}
-		
-								g_game_state.score -= 5
-								if g_game_state.score < 0 {
-									g_game_state.score = 0
-								}
-		
+
 								// Postpone the next spawn
 								g_game_state.last_box_spawn_time = g_game_state.time
 								g_game_state.player_was_hit = true
@@ -578,6 +627,10 @@ update :: proc(dt: f64) {
 								// Terminate the current wave
 								clear(&g_game_state.scheduled_spawns)
 								g_game_state.is_spawning_boxes = false
+
+								if r := ma.engine_play_sound(&g_audio_engine.engine, cstring("res/sounds/bonk.wav"), nil); r != .SUCCESS {
+									log.error("Failed to play the sound.")
+								}
 							}
 						}
 					}
