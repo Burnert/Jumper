@@ -1,0 +1,1 @@
+git subtree pull --prefix=Spelmotor https://github.com/Burnert/Spelmotor.git master --squash
