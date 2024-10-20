@@ -22,6 +22,8 @@ Vec2 :: [2]f32
 Vec3 :: [3]f32
 
 main :: proc() {
+	core.g_root_dir = "Spelmotor"
+
 	// For error handling
 	ok: bool
 
@@ -71,7 +73,7 @@ main :: proc() {
 		width = 1280, height = 720,
 		position = nil,
 		title = "Jumper",
-		fixed_size = false,
+		fixed_size = true,
 	}
 	if main_window, ok = platform.create_window(window_desc); !ok {
 		log.fatal("The main application window could not be created.")
@@ -137,7 +139,7 @@ update :: proc(dt: f64) {
 
 draw :: proc() {
 	if r2im.begin_frame() {
-		r2im.draw_sprite({0, 0}, 0, {10, 10}, "Spelmotor/engine/res/textures/white.png")
+		r2im.draw_sprite({0, 0}, 0, {10, 10}, core.path_make_engine_textures_relative("white.png"))
 		r2im.end_frame()
 	}
 }
